@@ -104,7 +104,7 @@ function listarChamadosAguardandoAtendimentoEPrevenirInteracao($filtro, $base_ur
 
 
 //makes htto-request
-function doCurl($data, $baseUrl, $endpoint, $headers, $raw=false, $hasbody = true, $method = -1)
+function doCurl($data, $baseUrl, $endpoint, $headers, $raw=false, $hasbody = true, $method = 3)
 {
 
 
@@ -173,7 +173,7 @@ function listarChamadosECriarNoOP($filter, $base_url, $endpoint,  $conf)
 
         $chamadosJaRegistrados = ChamadoController::get_chamados();
 
-        $novosBugs = $chamadosJaRegistrados;//array_diff($chamadosJaRegistrados, $chamadosEmAndamento);
+        $novosBugs = $chamadosEmAndamento;
 
 
         if(count($novosBugs)){
