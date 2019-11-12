@@ -78,6 +78,19 @@ function retorna_chave($chamado){
 }
 
 
+function filterByStatus($chamados, $status){
+    $chamadosAguardandoAtendimento = [];
+    foreach($chamados as $chamado){
+        if(isset($chamado->NomeStatus) && $chamado->NomeStatus == $status){
+            $chamadosAguardandoAtendimento[] = $chamado;
+        }
+    }
+
+    return $chamadosAguardandoAtendimento;
+}
+
+
+
 
 function listarChamadosAguardandoAtendimentoEPrevenirInteracao($filtro, $base_url, $endpoint, $conf){
     $token = autenticarDM($conf);
@@ -86,11 +99,15 @@ function listarChamadosAguardandoAtendimentoEPrevenirInteracao($filtro, $base_ur
     if($token!==null){
 
         $headers = getHeader($token, 0);
-        $chamadosAguardandoAtendimento = doCurl($filtro, $base_url, $endpoint, $headers)->root;
+        $chamadosAguardandoAtendimento = doCurl($filtro, $base_url, $endpoint, $headers);
 
         if(isset($chamadosAguardandoAtendimento->erro)){
             return;
+        }else if(!isset($chamadosAguardandoAtendimento->erro)&&isset($chamadosAguardandoAtendimento->root)){
+            $chamadosAguardandoAtendimento = $chamadosAguardandoAtendimento->root;
         }
+
+        $chamadosAguardandoAtendimento = filterByStatus($chamadosAguardandoAtendimento, 'Aguardando Atendimento');
 
        
         $chavesAguardandoAtendimento = array_map('retorna_chave',$chamadosAguardandoAtendimento);
@@ -104,7 +121,7 @@ function listarChamadosAguardandoAtendimentoEPrevenirInteracao($filtro, $base_ur
 
 
 //makes htto-request
-function doCurl($data, $baseUrl, $endpoint, $headers, $raw=false, $hasbody = true, $method = 3)
+function doCurl($data, $baseUrl, $endpoint, $headers, $raw=false, $hasbody = true, $method = -1)
 {
 
 
@@ -165,31 +182,39 @@ function listarChamadosECriarNoOP($filter, $base_url, $endpoint,  $conf)
 
         $headerWithToken = getHeader($token, 0);
 
-        $chamadosEmAndamento = doCurl($filter, $base_url, $endpoint, $headerWithToken)->root;
+        $chamadosNaFilaParaAnalise = doCurl($filter, $base_url, $endpoint, $headerWithToken)->root;
 
-        if(isset($chamadosEmAndamento->erro)){
+        if(isset($chamadosNaFilaParaAnalise->erro)){
             return;
         }
 
-        $chamadosJaRegistrados = ChamadoController::get_chamados();
+        $chamadosNaFilaParaAnalise = filterByStatus($chamadosNaFilaParaAnalise, 'Na fila para análise');
 
-        $novosBugs = $chamadosEmAndamento;
+        $chamadosJaRegistrados = ChamadoController::get_chamados()->pluck('chave')->toArray();
 
+        $novosBugs= [];
+
+        foreach($chamadosNaFilaParaAnalise as $chamado){
+            if(!in_array($chamado->Chave, $chamadosJaRegistrados)){
+                $novosBugs[] = $chamado;
+            }
+        }
 
         if(count($novosBugs)){
-            //foreach($novosBugs as $bug){
-                //criarChamadoNoBD($bug);
-                criarWorkPackage($novosBugs[0], $conf);//$bug, $conf);
-            //}
+            foreach($novosBugs as $bug){
+                criarChamadoNoBD($bug);
+                criarWorkPackage($bug, $conf);//$bug, $conf);
+            }
         }
     }
 
 }
 
+
 //sends to database
 function criarChamadoNoBD($bug)
 {
-    return $chamado = ChamadoController::create_chamado($bug->chave,$bug->cod, $bug->status_name);
+    return $chamado = ChamadoController::create_chamado($bug->Chave,$bug->CodChamado, $bug->NomeStatus);
     
 }
 
@@ -210,8 +235,8 @@ function criarWorkPackage($chamado_origin, $conf)
         $newWorkPackage = doCurl($workPackage, $conf['base_url_OP'], $conf['create_work_package'], $headersOP);
 
     
-        if($workPackage!=null&&isset($workPackage->id)){
-            syncChamadoProjectId($newWorkPackage->id, $chamado_origin->chave);
+        if($newWorkPackage!=null&&isset($newWorkPackage->id)){
+            syncChamadoProjectId($newWorkPackage->id, $chamado_origin->Chave);
         }
     }
   
@@ -291,14 +316,16 @@ function montaFiltroChamadoPorStatus($status){
 
 //gets workpackages from OpenProject and sends new statuses to deskManager
 function listarChamadosEAtualizarStatus($conf){
-    $chamadosRegistrados = ChamadoController::get_chamados_can_interact();
+    $chamadosRegistrados = ChamadoController::get_chamados_can_interact()->toArray();
 
     foreach($chamadosRegistrados as $chamado){
-        $oldStatus = $chamado->status_name;
-        $newStatus = getWorkPackageStatus($chamado->project_id, $conf);
-        if($newStatus!=null&&$oldStatus!=$newStatus){
-            $chamado->status_name = $newStatus;
-            atualizarStatusDM($chamado, $conf);
+        if($chamado['chave']!==null){
+            $oldStatus = $chamado['status_name'];
+            $newStatus = getWorkPackageStatus($chamado['project_id'], $conf);
+            if($newStatus!=null&&$oldStatus!=$newStatus){
+                $chamado['status_name'] = $newStatus;
+                atualizarStatusDM((Object) $chamado, $conf);
+            }
         }
     }
 
@@ -340,7 +367,7 @@ function getStatusNameFromWorkPackage($origin_name, $conf){
 function getWorkpackageSchemaFromChamado($chamado, $form){
     $customerId =  getCustomerId($chamado, $form);
     $workPackage = array (
-        'subject' => "Teste OS digital chamado",
+        'subject' => "{$chamado->CodChamado} {$chamado->Descricao}",
         'description' => 
             array (
                 'format' => 'markdown',
